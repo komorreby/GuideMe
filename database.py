@@ -89,6 +89,30 @@ class MuseumDatabase:
                 keywords TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_knowledge_keywords ON museum_knowledge(keywords);
+
+            CREATE TABLE IF NOT EXISTS routes (
+                from_node TEXT,
+                to_node TEXT,
+                distance REAL,
+                FOREIGN KEY (from_node) REFERENCES halls(id),
+                FOREIGN KEY (to_node) REFERENCES halls(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                rating INTEGER NOT NULL,
+                feedback TEXT,
+                timestamp TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS bookings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                time_slot TEXT NOT NULL,
+                date TEXT NOT NULL,
+                timestamp TEXT NOT NULL
+            );
         ''')
         conn.commit()
 
@@ -97,7 +121,8 @@ class MuseumDatabase:
         csv_files = {
             "halls": "halls.csv",
             "exhibits": "exhibits.csv",
-            "museum_knowledge": "museum_knowledge.csv"
+            "museum_knowledge": "museum_knowledge.csv",
+            "routes": "routes.csv"
         }
         
         # Проверяем наличие CSV-файлов
@@ -117,7 +142,8 @@ class MuseumDatabase:
         queries = {
             "halls": "INSERT OR REPLACE INTO halls VALUES (?, ?, ?, ?, ?, ?, ?)",
             "exhibits": "INSERT OR REPLACE INTO exhibits VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            "museum_knowledge": "INSERT OR REPLACE INTO museum_knowledge VALUES (?, ?, ?, ?, ?)"
+            "museum_knowledge": "INSERT OR REPLACE INTO museum_knowledge VALUES (?, ?, ?, ?, ?)",
+            "routes": "INSERT OR REPLACE INTO routes VALUES (?, ?, ?)"
         }
         
         if table_name not in queries:
@@ -143,7 +169,8 @@ class MuseumDatabase:
         tables = {
             "halls": ["id", "name", "description", "location", "size", "art_period", "exhibit_count"],
             "exhibits": ["id", "hall_id", "title", "artist", "description", "art_style", "creation_year", "medium", "origin_country", "tags", "multimedia_link"],
-            "museum_knowledge": ["id", "category", "question", "answer", "keywords"]
+            "museum_knowledge": ["id", "category", "question", "answer", "keywords"],
+            "routes": ["from_node", "to_node", "distance"]
         }
 
         with self._get_connection() as conn:
@@ -225,6 +252,96 @@ class MuseumDatabase:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM exhibits ORDER BY id")
             return [dict(row) for row in cursor.fetchall()]
+
+    def find_route(self, from_hall_id: int, to_hall_id: int) -> str:
+        """Поиск маршрута между залами с использованием алгоритма Дейкстры."""
+        # Получаем все маршруты из таблицы routes
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT from_node, to_node, distance FROM routes")
+            routes = cursor.fetchall()
+
+        # Создаём граф (неориентированный)
+        graph = {}
+        for from_node, to_node, distance in routes:
+            if from_node not in graph:
+                graph[from_node] = {}
+            if to_node not in graph:
+                graph[to_node] = {}
+            # Добавляем двусторонние связи
+            graph[from_node][to_node] = float(distance)
+            graph[to_node][from_node] = float(distance)  # Обратная связь
+
+        # Проверяем, существуют ли начальный и конечный залы в графе
+        from_hall_str = str(from_hall_id)
+        to_hall_str = str(to_hall_id)
+        if from_hall_str not in graph:
+            return f"Зал с ID {from_hall_id} не найден в маршрутах."
+        if to_hall_str not in graph:
+            return f"Зал с ID {to_hall_id} не найден в маршрутах."
+
+        # Алгоритм Дейкстры
+        distances = {node: float('infinity') for node in graph}
+        distances[from_hall_str] = 0
+        previous = {node: None for node in graph}
+        unvisited = set(graph.keys())
+
+        while unvisited:
+            current = min(unvisited, key=lambda node: distances[node])
+            if current == to_hall_str:
+                break
+            unvisited.remove(current)
+
+            for neighbor, weight in graph[current].items():
+                if neighbor in unvisited:
+                    new_distance = distances[current] + weight
+                    if new_distance < distances[neighbor]:
+                        distances[neighbor] = new_distance
+                        previous[neighbor] = current
+
+        # Проверяем, найден ли путь
+        if distances[to_hall_str] == float('infinity'):
+            return "Маршрут не найден. Возможно, залы не связаны."
+
+        # Восстанавливаем путь
+        path = []
+        current = to_hall_str
+        while current is not None:
+            path.append(current)
+            current = previous[current]
+        path.reverse()
+
+        # Формируем описание маршрута
+        halls = self.get_all_halls()
+        hall_dict = {str(hall['id']): hall['name'] for hall in halls}
+        route_description = "Ваш маршрут:\n"
+        for i in range(len(path) - 1):
+            from_hall = hall_dict[path[i]]
+            to_hall = hall_dict[path[i + 1]]
+            route_description += f"Пройдите из '{from_hall}' в '{to_hall}'.\n"
+        return route_description
+
+    def save_feedback(self, user_id: int, rating: int, feedback: str, timestamp: str) -> None:
+        """Сохранение отзыва в базе данных."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO feedback (user_id, rating, feedback, timestamp)
+                VALUES (?, ?, ?, ?)
+            ''', (user_id, rating, feedback, timestamp))
+            conn.commit()
+            logger.info(f"Отзыв сохранён: user_id={user_id}, rating={rating}, timestamp={timestamp}")
+
+    def save_booking(self, user_id: int, time_slot: str, date: str, timestamp: str) -> None:
+        """Сохранение записи на экскурсию в базе данных."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO bookings (user_id, time_slot, date, timestamp)
+                VALUES (?, ?, ?, ?)
+            ''', (user_id, time_slot, date, timestamp))
+            conn.commit()
+            logger.info(f"Запись на экскурсию сохранена: user_id={user_id}, time_slot={time_slot}, date={date}")
 
     def __del__(self):
         """Деструктор для гарантированного закрытия соединения."""
