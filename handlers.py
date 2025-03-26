@@ -141,7 +141,7 @@ def setup(dp):
         await message.reply(response, parse_mode="Markdown", reply_markup=get_main_menu())
         await state.set_state(UserState.main_menu)
 
-    @dp.message(lambda message: message.text == "🌍 Маршрут", UserState.main_menu)
+    @dp.message(lambda message: message.text == "🌍 Помоги с путем", UserState.main_menu)
     async def start_route(message: types.Message, state: FSMContext):
         await state.update_data(route_step=0)
         await show_route_step(message, state)
