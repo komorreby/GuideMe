@@ -1,46 +1,86 @@
 import sqlite3
 import csv
-from typing import List, Tuple
+from typing import List, Tuple, Optional, Dict
+from contextlib import contextmanager
+import logging
+import os
+
+# Настройка логирования
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class MuseumDatabase:
-    def __init__(self, db_path="art_museum.db"):
-        """Инициализация базы данных музея искусств."""
-        self.conn = sqlite3.connect(db_path)
-        self.cursor = self.conn.cursor()
-        self._create_tables()
-        self._populate_initial_data()
+    def __init__(self, db_path: str = "art_museum.db", timeout: float = 5.0, data_dir: str = "data"):
+        """
+        Инициализация базы данных музея искусств.
+        
+        Args:
+            db_path (str): Путь к файлу базы данных
+            timeout (float): Таймаут соединения в секундах
+            data_dir (str): Папка с CSV-файлами данных
+        """
+        self.db_path = db_path
+        self.timeout = timeout
+        self.data_dir = data_dir
+        # Создаём папку data, если её нет
+        os.makedirs(self.data_dir, exist_ok=True)
+        self._initialize_database()
 
-    def _create_tables(self):
-        """Создание таблиц для музея искусств."""
-        self.cursor.executescript('''
-            -- Таблица залов
+    @contextmanager
+    def _get_connection(self):
+        """Контекстный менеджер для управления соединением с БД."""
+        conn = sqlite3.connect(self.db_path, timeout=self.timeout)
+        conn.row_factory = sqlite3.Row
+        try:
+            yield conn
+        except sqlite3.Error as e:
+            logger.error(f"Ошибка базы данных: {e}")
+            raise
+        finally:
+            conn.close()
+
+    def _initialize_database(self):
+        """Инициализация структуры базы данных и загрузка данных."""
+        try:
+            with self._get_connection() as conn:
+                self._create_tables(conn)
+                self._load_or_export_data(conn)
+        except sqlite3.Error as e:
+            logger.error(f"Ошибка инициализации базы данных: {e}")
+            raise
+
+    def _create_tables(self, conn: sqlite3.Connection):
+        """Создание таблиц базы данных с индексами для оптимизации поиска."""
+        conn.executescript('''
             CREATE TABLE IF NOT EXISTS halls (
                 id INTEGER PRIMARY KEY,
                 name TEXT NOT NULL,
                 description TEXT,
                 location TEXT,
-                size INTEGER,           -- Площадь зала в кв.м
-                art_period TEXT,        -- Художественный период (например, "Ренессанс")
+                size INTEGER,
+                art_period TEXT,
                 exhibit_count INTEGER DEFAULT 0
             );
+            CREATE INDEX IF NOT EXISTS idx_halls_art_period ON halls(art_period);
 
-            -- Таблица экспонатов (произведений искусства)
             CREATE TABLE IF NOT EXISTS exhibits (
                 id INTEGER PRIMARY KEY,
                 hall_id INTEGER,
-                title TEXT NOT NULL,    -- Название произведения
-                artist TEXT,            -- Автор
+                title TEXT NOT NULL,
+                artist TEXT,
                 description TEXT,
-                art_style TEXT,         -- Стиль (например, "Импрессионизм")
-                creation_year INTEGER,  -- Год создания
-                medium TEXT,            -- Материал/техника (например, "Масло на холсте")
-                origin_country TEXT,    -- Страна происхождения
-                tags TEXT,              -- Теги для поиска
-                multimedia_link TEXT,   -- Ссылка на фото/видео
+                art_style TEXT,
+                creation_year INTEGER,
+                medium TEXT,
+                origin_country TEXT,
+                tags TEXT,
+                multimedia_link TEXT,
                 FOREIGN KEY(hall_id) REFERENCES halls(id)
             );
+            CREATE INDEX IF NOT EXISTS idx_exhibits_title ON exhibits(title);
+            CREATE INDEX IF NOT EXISTS idx_exhibits_artist ON exhibits(artist);
+            CREATE INDEX IF NOT EXISTS idx_exhibits_tags ON exhibits(tags);
 
-            -- Таблица FAQ и знаний музея
             CREATE TABLE IF NOT EXISTS museum_knowledge (
                 id INTEGER PRIMARY KEY,
                 category TEXT,
@@ -48,118 +88,146 @@ class MuseumDatabase:
                 answer TEXT,
                 keywords TEXT
             );
+            CREATE INDEX IF NOT EXISTS idx_knowledge_keywords ON museum_knowledge(keywords);
         ''')
-        self.conn.commit()
+        conn.commit()
 
-    def _populate_initial_data(self):
-        """Заполнение базы начальными данными для музея искусств."""
-        # Залы
-        initial_halls = [
-            (1, "Зал Ренессанса", "Произведения эпохи Возрождения", "Первый этаж", 200, "Ренессанс", 10),
-            (2, "Зал Модернизма", "Искусство XX века", "Второй этаж", 250, "Модернизм", 15),
-            (3, "Зал Восточного искусства", "Коллекция азиатского искусства", "Третий этаж", 180, "Восточное искусство", 12)
-        ]
-
-        # Экспонаты
-        initial_exhibits = [
-            (1, 1, "Мона Лиза", "Леонардо да Винчи", "Знаменитая картина с загадочной улыбкой", "Ренессанс", 1503, "Масло на тополе", "Италия", "портрет, ренессанс, леонардо", "mona_lisa.jpg"),
-            (2, 1, "Тайная вечеря", "Леонардо да Винчи", "Фреска с изображением последней трапезы", "Ренессанс", 1498, "Темпера на штукатурке", "Италия", "фреска, религия", "last_supper.jpg"),
-            (3, 2, "Звёздная ночь", "Винсент Ван Гог", "Пейзаж с вихрями звёзд", "Постимпрессионизм", 1889, "Масло на холсте", "Нидерланды", "пейзаж, ван гог", "starry_night.jpg"),
-            (4, 2, "Герника", "Пабло Пикассо", "Антивоенное произведение", "Кубизм", 1937, "Масло на холсте", "Испания", "война, кубизм", "guernica.jpg"),
-            (5, 3, "Великая волна в Канагаве", "Хокусай", "Гравюра с изображением волны", "Укиё-э", 1831, "Ксилография", "Япония", "гравюра, море", "great_wave.jpg")
-        ]
-
-        # FAQ
-        initial_knowledge = [
-            (1, "museum_info", "Когда основан музей?", "Музей искусств открыт в 1920 году", "музей, история"),
-            (2, "exhibit_info", "Что такое 'Мона Лиза'?", "Картина Леонардо да Винчи, созданная в 1503 году", "мона лиза, ренессанс"),
-            (3, "tour_info", "Сколько длится экскурсия?", "Экскурсия длится 1-2 часа", "экскурсия, время")
-        ]
-
-        self.cursor.executemany(
-            "INSERT OR IGNORE INTO halls VALUES (?, ?, ?, ?, ?, ?, ?)", initial_halls
-        )
-        self.cursor.executemany(
-            "INSERT OR IGNORE INTO exhibits VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", initial_exhibits
-        )
-        self.cursor.executemany(
-            "INSERT OR IGNORE INTO museum_knowledge VALUES (?, ?, ?, ?, ?)", initial_knowledge
-        )
-        self.conn.commit()
-
-    def load_from_csv(self, table_name: str, csv_path: str):
-        """
-        Загрузка данных из CSV-файла в указанную таблицу.
+    def _load_or_export_data(self, conn: sqlite3.Connection):
+        """Загрузка данных из CSV или экспорт из базы, если CSV нет."""
+        csv_files = {
+            "halls": "halls.csv",
+            "exhibits": "exhibits.csv",
+            "museum_knowledge": "museum_knowledge.csv"
+        }
         
-        :param table_name: Название таблицы ('halls', 'exhibits', 'museum_knowledge')
-        :param csv_path: Путь к CSV-файлу
-        """
+        # Проверяем наличие CSV-файлов
+        all_csv_exist = all(os.path.exists(os.path.join(self.data_dir, filename)) for filename in csv_files.values())
+        
+        if all_csv_exist:
+            # Если все CSV есть, загружаем данные из них
+            for table, filename in csv_files.items():
+                file_path = os.path.join(self.data_dir, filename)
+                self.load_from_csv(table, file_path)
+        else:
+            # Если хотя бы одного CSV нет, экспортируем данные из базы
+            self._export_to_csv()
+
+    def load_from_csv(self, table_name: str, csv_path: str) -> int:
+        """Загрузка данных из CSV в указанную таблицу."""
+        queries = {
+            "halls": "INSERT OR REPLACE INTO halls VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "exhibits": "INSERT OR REPLACE INTO exhibits VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "museum_knowledge": "INSERT OR REPLACE INTO museum_knowledge VALUES (?, ?, ?, ?, ?)"
+        }
+        
+        if table_name not in queries:
+            raise ValueError(f"Неизвестная таблица: {table_name}")
+
         try:
-            with open(csv_path, newline='', encoding='utf-8') as csvfile:
-                reader = csv.DictReader(csvfile)
-                if table_name == "halls":
-                    query = "INSERT OR REPLACE INTO halls (id, name, description, location, size, art_period, exhibit_count) VALUES (?, ?, ?, ?, ?, ?, ?)"
-                    data = [
-                        (row["id"], row["name"], row["description"], row["location"], row["size"], row["art_period"], row["exhibit_count"])
-                        for row in reader
-                    ]
-                elif table_name == "exhibits":
-                    query = "INSERT OR REPLACE INTO exhibits (id, hall_id, title, artist, description, art_style, creation_year, medium, origin_country, tags, multimedia_link) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-                    data = [
-                        (row["id"], row["hall_id"], row["title"], row["artist"], row["description"], row["art_style"],
-                         row["creation_year"], row["medium"], row["origin_country"], row["tags"], row["multimedia_link"])
-                        for row in reader
-                    ]
-                elif table_name == "museum_knowledge":
-                    query = "INSERT OR REPLACE INTO museum_knowledge (id, category, question, answer, keywords) VALUES (?, ?, ?, ?, ?)"
-                    data = [
-                        (row["id"], row["category"], row["question"], row["answer"], row["keywords"])
-                        for row in reader
-                    ]
-                else:
-                    raise ValueError(f"Неизвестная таблица: {table_name}")
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                with open(csv_path, 'r', encoding='utf-8') as csvfile:
+                    reader = csv.reader(csvfile)
+                    next(reader)  # Пропускаем заголовок
+                    rows = [tuple(row) for row in reader]
+                    cursor.executemany(queries[table_name], rows)
+                    conn.commit()
+                    logger.info(f"Загружено {len(rows)} записей в таблицу {table_name} из {csv_path}")
+                    return len(rows)
+        except (sqlite3.Error, csv.Error) as e:
+            logger.error(f"Ошибка загрузки CSV: {e}")
+            raise
 
-                self.cursor.executemany(query, data)
-                self.conn.commit()
-                print(f"Данные успешно загружены в таблицу {table_name} из {csv_path}")
-        except Exception as e:
-            print(f"Ошибка загрузки CSV: {e}")
-            self.conn.rollback()
+    def _export_to_csv(self):
+        """Экспорт данных из таблиц SQLite в CSV-файлы."""
+        tables = {
+            "halls": ["id", "name", "description", "location", "size", "art_period", "exhibit_count"],
+            "exhibits": ["id", "hall_id", "title", "artist", "description", "art_style", "creation_year", "medium", "origin_country", "tags", "multimedia_link"],
+            "museum_knowledge": ["id", "category", "question", "answer", "keywords"]
+        }
 
-    def get_hall_info(self, hall_id: int) -> Tuple:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            for table, columns in tables.items():
+                file_path = os.path.join(self.data_dir, f"{table}.csv")
+                cursor.execute(f"SELECT * FROM {table}")
+                rows = cursor.fetchall()
+                
+                # Если таблица пуста, записываем только заголовки
+                with open(file_path, 'w', newline='', encoding='utf-8') as csvfile:
+                    writer = csv.writer(csvfile)
+                    writer.writerow(columns)  # Записываем заголовки
+                    if rows:
+                        for row in rows:
+                            writer.writerow([row[col] for col in columns])
+                    logger.info(f"Экспортировано {len(rows)} записей из таблицы {table} в {file_path}")
+
+    def get_hall_info(self, hall_id: int) -> Optional[Dict]:
         """Получение информации о зале по ID."""
-        self.cursor.execute("SELECT * FROM halls WHERE id = ?", (hall_id,))
-        return self.cursor.fetchone()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM halls WHERE id = ?", (hall_id,))
+            result = cursor.fetchone()
+            return dict(result) if result else None
 
-    def get_exhibit_info(self, exhibit_id: int) -> Tuple:
+    def get_exhibit_info(self, exhibit_id: int) -> Optional[Dict]:
         """Получение информации об экспонате по ID."""
-        self.cursor.execute("SELECT * FROM exhibits WHERE id = ?", (exhibit_id,))
-        return self.cursor.fetchone()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM exhibits WHERE id = ?", (exhibit_id,))
+            result = cursor.fetchone()
+            return dict(result) if result else None
 
-    def search_exhibits(self, keywords: str) -> List[Tuple]:
-        """Поиск экспонатов по ключевым словам."""
-        self.cursor.execute(
-            "SELECT * FROM exhibits WHERE tags LIKE ? OR title LIKE ? OR artist LIKE ? OR description LIKE ?",
-            (f"%{keywords}%", f"%{keywords}%", f"%{keywords}%", f"%{keywords}%")
-        )
-        return self.cursor.fetchall()
+    def search_exhibits(self, keywords: str, limit: int = 10) -> List[Dict]:
+        """Поиск экспонатов по ключевым словам с лимитом результатов."""
+        query = """
+            SELECT * FROM exhibits 
+            WHERE tags LIKE ? OR title LIKE ? OR artist LIKE ? OR description LIKE ?
+            LIMIT ?
+        """
+        params = (f"%{keywords}%", f"%{keywords}%", f"%{keywords}%", f"%{keywords}%", limit)
+        
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, params)
+            return [dict(row) for row in cursor.fetchall()]
 
-    def get_faq(self, category: str = None) -> List[Tuple]:
+    def get_faq(self, category: str = None) -> List[Tuple[str, str]]:
         """Получение FAQ по категории или всех записей."""
         query = "SELECT question, answer FROM museum_knowledge"
         params = ()
         if category:
             query += " WHERE category = ?"
             params = (category,)
-        self.cursor.execute(query, params)
-        return self.cursor.fetchall()
+            
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, params)
+            return cursor.fetchall()
 
-    def close(self):
-        """Закрытие соединения с базой данных."""
-        self.conn.close()
+    def get_exhibits_by_hall(self, hall_id: int) -> List[Dict]:
+        """Получение всех экспонатов в указанном зале."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM exhibits WHERE hall_id = ?", (hall_id,))
+            return [dict(row) for row in cursor.fetchall()]
 
-# Глобальная инициализация базы данных
+    def get_all_halls(self) -> List[Dict]:
+        """Получение всех залов."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM halls ORDER BY id")
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_all_exhibits(self) -> List[Dict]:
+        """Получение всех экспонатов."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM exhibits ORDER BY id")
+            return [dict(row) for row in cursor.fetchall()]
+
+    def __del__(self):
+        """Деструктор для гарантированного закрытия соединения."""
+        logger.debug("Закрытие соединения с базой данных")
+
 museum_database = MuseumDatabase()
-
-# Пример использования загрузки из CSV (раскомментируйте для теста)
-# museum_database.load_from_csv("exhibits", "exhibits.csv")

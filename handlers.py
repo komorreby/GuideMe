@@ -1,5 +1,5 @@
 from aiogram import types
-from aiogram.filters import Command  # Оставляем только Command
+from aiogram.filters import Command
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
@@ -9,8 +9,8 @@ from image_recognition import ImageRecognizer
 import aiofiles
 import os
 from loguru import logger
+from typing import List, Dict  # Добавляем импорт List и Dict
 
-# Определяем состояния для управления диалогом
 class UserState(StatesGroup):
     main_menu = State()
     exploring_halls = State()
@@ -21,9 +21,8 @@ class UserState(StatesGroup):
 
 def setup(dp):
     """Настройка обработчиков для бота с улучшенным UX."""
-    recognizer = ImageRecognizer()  # Инициализируем распознаватель
+    recognizer = ImageRecognizer()
 
-    # Основное меню (реплай-клавиатура)
     def get_main_menu():
         return ReplyKeyboardMarkup(
             keyboard=[
@@ -36,19 +35,22 @@ def setup(dp):
             one_time_keyboard=False
         )
 
-    # Инлайн-клавиатура для навигации по залам
-    def get_hall_navigation():
-        return InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Ренессанс", callback_data="hall_1"),
-             InlineKeyboardButton(text="Модернизм", callback_data="hall_2")],
-            [InlineKeyboardButton(text="Восточное искусство", callback_data="hall_3"),
-             InlineKeyboardButton(text="Далее ➡️", callback_data="next_hall")],
-            [InlineKeyboardButton(text="Назад в меню", callback_data="back_to_menu")]
+    def get_hall_navigation(halls: List[Dict]):
+        """Динамическая генерация клавиатуры для залов."""
+        buttons = [
+            InlineKeyboardButton(text=hall["name"], callback_data=f"hall_{hall['id']}")
+            for hall in halls
+        ]
+        # Разбиваем кнопки на строки по 3
+        inline_kb = [buttons[i:i+3] for i in range(0, len(buttons), 3)]
+        inline_kb.append([
+            InlineKeyboardButton(text="Далее ➡️", callback_data="next_hall"),
+            InlineKeyboardButton(text="Назад в меню", callback_data="back_to_menu")
         ])
+        return InlineKeyboardMarkup(inline_keyboard=inline_kb)
 
     @dp.message(Command("start"))
     async def send_welcome(message: types.Message, state: FSMContext):
-        """Приветствие с установкой начального состояния."""
         welcome_text = (
             "🎨 Добро пожаловать в музей искусств! Я ваш виртуальный гид. "
             "Выберите, что хотите узнать, или просто спросите меня!"
@@ -58,36 +60,38 @@ def setup(dp):
 
     @dp.message(lambda message: message.text == "🏛️ Залы", UserState.main_menu)
     async def start_halls_exploration(message: types.Message, state: FSMContext):
-        await message.reply("Выберите зал для исследования:", reply_markup=get_hall_navigation())
+        halls = museum_database.get_all_halls()
+        await message.reply("Выберите зал для исследования:", reply_markup=get_hall_navigation(halls))
         await state.set_state(UserState.exploring_halls)
-        await state.update_data(hall_index=0)
+        await state.update_data(hall_index=0, halls=halls)
 
     @dp.callback_query(lambda c: c.data.startswith("hall_"), UserState.exploring_halls)
     async def show_hall_details(callback: types.CallbackQuery, state: FSMContext):
         hall_id = int(callback.data.split("_")[1])
         hall = museum_database.get_hall_info(hall_id)
         if hall:
-            response = f"*{hall[1]}*\n{hall[2]}\n📍 {hall[3]}\nПериод: {hall[5]}"
-            await callback.message.edit_text(response, parse_mode="Markdown", reply_markup=get_hall_navigation())
+            response = f"*{hall['name']}*\n{hall['description']}\n📍 {hall['location']}\nПериод: {hall['art_period']}\nЭкспонатов: {hall['exhibit_count']}"
+            halls = museum_database.get_all_halls()
+            await callback.message.edit_text(response, parse_mode="Markdown", reply_markup=get_hall_navigation(halls))
         await callback.answer()
 
     @dp.callback_query(lambda c: c.data == "next_hall", UserState.exploring_halls)
     async def next_hall(callback: types.CallbackQuery, state: FSMContext):
         data = await state.get_data()
         hall_index = data.get("hall_index", 0) + 1
-        hall_ids = [1, 2, 3]
-        if hall_index < len(hall_ids):
-            hall = museum_database.get_hall_info(hall_ids[hall_index])
-            response = f"*{hall[1]}*\n{hall[2]}\n📍 {hall[3]}\nПериод: {hall[5]}"
-            await callback.message.edit_text(response, parse_mode="Markdown", reply_markup=get_hall_navigation())
+        halls = data.get("halls", museum_database.get_all_halls())
+        if hall_index < len(halls):
+            hall = halls[hall_index]
+            response = f"*{hall['name']}*\n{hall['description']}\n📍 {hall['location']}\nПериод: {hall['art_period']}\nЭкспонатов: {hall['exhibit_count']}"
+            await callback.message.edit_text(response, parse_mode="Markdown", reply_markup=get_hall_navigation(halls))
             await state.update_data(hall_index=hall_index)
         else:
-            await callback.message.edit_text("Все залы просмотрены!", reply_markup=get_hall_navigation())
+            await callback.message.edit_text("Все залы просмотрены!", reply_markup=get_hall_navigation(halls))
         await callback.answer()
 
     @dp.message(lambda message: message.text == "🖼️ Экспонаты", UserState.main_menu)
     async def start_exhibits_exploration(message: types.Message, state: FSMContext):
-        exhibits = [museum_database.get_exhibit_info(i) for i in range(1, 6)]
+        exhibits = museum_database.get_all_exhibits()
         await state.update_data(exhibits=exhibits, exhibit_index=0)
         await show_next_exhibit(message, state)
         await state.set_state(UserState.exploring_exhibits)
@@ -98,7 +102,7 @@ def setup(dp):
         index = data.get("exhibit_index", 0)
         if index < len(exhibits):
             ex = exhibits[index]
-            response = f"*{ex[2]}*\nАвтор: {ex[3]}\n{ex[4]}\nСтиль: {ex[5]}\nГод: {ex[6]}"
+            response = f"*{ex['title']}*\nАвтор: {ex['artist']}\n{ex['description']}\nСтиль: {ex['art_style']}\nГод: {ex['creation_year']}"
             inline_kb = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="Далее ➡️", callback_data="next_exhibit"),
                  InlineKeyboardButton(text="Назад ⬅️", callback_data="prev_exhibit")],
@@ -124,7 +128,9 @@ def setup(dp):
     @dp.message(lambda message: message.text == "❓ FAQ", UserState.main_menu)
     async def show_faq(message: types.Message):
         faqs = museum_database.get_faq()
-        response = "❓ FAQ:\n\n" + "\n".join(f"❔ {q}\n💡 {a}" for q, a in faqs)
+        response = "❓ FAQ:\n\n" + "\n".join(f"❔ {q}\n💡 {a}" for q, a in faqs[:10])  # Ограничение до 10
+        if len(faqs) > 10:
+            response += "\n\nИ ещё больше ответов доступно у AI-ассистента!"
         await message.reply(response, reply_markup=get_main_menu())
 
     @dp.message(lambda message: message.text == "🔍 Поиск", UserState.main_menu)
@@ -136,25 +142,23 @@ def setup(dp):
     async def process_search(message: types.Message, state: FSMContext):
         results = museum_database.search_exhibits(message.text)
         response = "🔍 Результаты:\n\n" + (
-            "\n".join(f"*{ex[2]}* ({ex[3]})\n{ex[4]}" for ex in results) if results else "Ничего не найдено."
+            "\n".join(f"*{ex['title']}* ({ex['artist']})\n{ex['description']}" for ex in results) if results else "Ничего не найдено."
         )
         await message.reply(response, parse_mode="Markdown", reply_markup=get_main_menu())
         await state.set_state(UserState.main_menu)
 
     @dp.message(lambda message: message.text == "🌍 Маршрут", UserState.main_menu)
     async def start_route(message: types.Message, state: FSMContext):
-        await state.update_data(route_step=0)
+        halls = museum_database.get_all_halls()
+        steps = [f"{i+1}. {hall['name']}: {hall['description'].split('.')[0]}." for i, hall in enumerate(halls)]
+        steps.append(f"{len(halls)+1}. Выход: завершите тур у сувенирного магазина.")
+        await state.update_data(route_steps=steps, route_step=0)
         await show_route_step(message, state)
         await state.set_state(UserState.route_navigation)
 
     async def show_route_step(message_or_callback: types.Message | types.CallbackQuery, state: FSMContext):
-        steps = [
-            "1. Зал Ренессанса: начните с шедевров Возрождения.",
-            "2. Зал Модернизма: погрузитесь в искусство XX века.",
-            "3. Зал Восточного искусства: откройте азиатскую коллекцию.",
-            "4. Выход: завершите тур у сувенирного магазина."
-        ]
         data = await state.get_data()
+        steps = data["route_steps"]
         step = data.get("route_step", 0)
         inline_kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Далее ➡️", callback_data="next_step"),
@@ -170,9 +174,10 @@ def setup(dp):
     @dp.callback_query(lambda c: c.data in ["next_step", "prev_step"], UserState.route_navigation)
     async def navigate_route(callback: types.CallbackQuery, state: FSMContext):
         data = await state.get_data()
+        steps = data["route_steps"]
         step = data.get("route_step", 0)
         if callback.data == "next_step":
-            step = min(step + 1, 3)
+            step = min(step + 1, len(steps) - 1)
         else:
             step = max(0, step - 1)
         await state.update_data(route_step=step)
@@ -184,21 +189,15 @@ def setup(dp):
         await message.reply("Спроси меня об искусстве или пришли фото картины для распознавания!")
         await state.set_state(UserState.asking_question)
 
-    @dp.message(UserState.asking_question)  # Единый обработчик для текста и фото
+    @dp.message(UserState.asking_question)
     async def handle_question_or_photo(message: types.Message, state: FSMContext):
-        # Проверяем, есть ли фото в сообщении
         if message.photo:
             logger.info(f"Получено фото от пользователя {message.from_user.id}")
-            photo = message.photo[-1]  # Берем фото максимального размера
+            photo = message.photo[-1]
             file_path = f"temp_{photo.file_id}.jpg"
-
             try:
-                # Получаем информацию о файле
                 file = await message.bot.get_file(photo.file_id)
-                # Скачиваем файл
                 await message.bot.download_file(file.file_path, file_path)
-                logger.debug(f"Фото сохранено как {file_path}")
-
                 recognized_objects = recognizer.recognize_image(file_path)
                 matches = recognizer.match_with_exhibits(recognized_objects)
 
@@ -206,17 +205,16 @@ def setup(dp):
                     response = "🔍 Найдены связанные экспонаты:\n\n"
                     for obj, exhibit in matches:
                         response += (
-                            f"*{exhibit[2]}*\n"
+                            f"*{exhibit['title']}*\n"
                             f"Объект: {obj['class']} (Уверенность: {obj['confidence']:.2%})\n"
-                            f"Автор: {exhibit[3]}\n"
-                            f"Описание: {exhibit[4]}\n\n"
+                            f"Автор: {exhibit['artist']}\n"
+                            f"Описание: {exhibit['description']}\n\n"
                         )
                 else:
                     response = "😕 На изображении не найдено связей с экспонатами музея.\n" + str(recognized_objects)
-
                 inline_kb = InlineKeyboardMarkup(inline_keyboard=[
                     [InlineKeyboardButton(text="Ещё вопрос", callback_data="more_questions"),
-                    InlineKeyboardButton(text="В меню", callback_data="back_to_menu")]
+                     InlineKeyboardButton(text="В меню", callback_data="back_to_menu")]
                 ])
                 await message.reply(response, parse_mode="Markdown", reply_markup=inline_kb)
             except Exception as e:
@@ -227,11 +225,10 @@ def setup(dp):
                     os.remove(file_path)
                     logger.debug(f"Временный файл {file_path} удалён")
         else:
-            # Обработка текстового вопроса
             response = get_ai_response(message.text)
             inline_kb = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="Ещё вопрос", callback_data="more_questions"),
-                InlineKeyboardButton(text="В меню", callback_data="back_to_menu")]
+                 InlineKeyboardButton(text="В меню", callback_data="back_to_menu")]
             ])
             await message.reply(response, reply_markup=inline_kb)
 

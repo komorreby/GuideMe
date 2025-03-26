@@ -7,7 +7,7 @@ import os
 from loguru import logger
 
 class ImageRecognizer:
-    def __init__(self, model_path: str = 'yolov8n.pt'):
+    def __init__(self, model_path: str = 'C:\\Users\\alex\\Desktop\\GuideMe\\runs\\detect\\museum_model\\weights\\best.pt'):
         """
         Инициализация распознавателя изображений с YOLO.
 
@@ -39,7 +39,7 @@ class ImageRecognizer:
             raise FileNotFoundError(f"Файл {image_path} не найден")
 
         try:
-            results = self.model(image_path)
+            results = self.model(image_path, conf=0.01)
             logger.info(f"Распознавание выполнено для {image_path}")
         except Exception as e:
             logger.error(f"Ошибка при распознавании изображения {image_path}: {e}")
@@ -83,5 +83,3 @@ class ImageRecognizer:
                 logger.debug(f"Для объекта {obj['class']} экспонаты не найдены")
 
         return matches
-
-# Убираем setup_image_recognition_handlers, так как обработка будет в handlers.py
