@@ -7,7 +7,7 @@ import os
 from loguru import logger
 
 class ImageRecognizer:
-    def __init__(self, model_path: str = 'C:\\Users\\alex\\Desktop\\GuideMe\\runs\\detect\\museum_model\\weights\\best.pt'):
+    def __init__(self, model_path: str = 'C:\\Users\\alex\\Desktop\\GuideMe\\museum_yolov8.pt'):
         """
         Инициализация распознавателя изображений с YOLO.
 
