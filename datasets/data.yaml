@@ -2,5 +2,12 @@ train: ../train/images
 val: ../valid/images
 test: ../test/images
 
-nc: 2
-names: ['Madonna of Loreto', 'Venus and Mars']
+nc: 27
+names: ['Ballet Rehearsal', 'Balloon Dog', 'Broadway Boogie Woogie', 'Campbells Soup Cans', 'Impression Sunrise', 'Judith Slaying Holofernes', 'Les Demoiselles dAvignon', 'Liberty Leading the People', 'Luncheon of the Boating Party', 'Madonna of Loreto', 'Olympia', 'Self-Portrait with a Monkey', 'Sistine Madonna', 'The Birth of Venus', 'The Card Players', 'The Death of Socrates', 'The Last Supper', 'The Oath of the Horatii', 'The Persistence of Memory', 'The Raft of the Medusa', 'The Starry Night', 'The Swing', 'The Triumph of Bacchus', 'Untitled', 'Venus and Mars', 'Wanderer above the Sea of Fog', 'Where Do We Come From What Are We Where Are We Going']
+
+roboflow:
+  workspace: chayan
+  project: arts-ponzx
+  version: 1
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/chayan/arts-ponzx/dataset/1

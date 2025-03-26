@@ -7,7 +7,7 @@ import os
 from loguru import logger
 
 class ImageRecognizer:
-    def __init__(self, model_path: str = 'D:/4 курс/Хакатон/Guide_Me2/GuideMe/museum_yolov8.pt'):
+    def __init__(self, model_path: str = 'museum_yolov8.pt'):
         """
         Инициализация распознавателя изображений с YOLO.
 
@@ -39,7 +39,7 @@ class ImageRecognizer:
             raise FileNotFoundError(f"Файл {image_path} не найден")
 
         try:
-            results = self.model(image_path, conf=0.01)
+            results = self.model(image_path, conf=0.8)
             logger.info(f"Распознавание выполнено для {image_path}")
         except Exception as e:
             logger.error(f"Ошибка при распознавании изображения {image_path}: {e}")
