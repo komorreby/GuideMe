@@ -9,6 +9,8 @@ load_dotenv()
 
 # Токен бота (рекомендуется вынести в переменные окружения)
 API_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+if not API_TOKEN or not isinstance(API_TOKEN, str):
+    raise ValueError("API_TOKEN не найден или не является строкой.")
 
 # Инициализация бота и диспетчера
 bot = Bot(token=API_TOKEN)
