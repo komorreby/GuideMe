@@ -1,21 +1,21 @@
 from ultralytics import YOLO
 def main():
     # Загружаем предобученную модель
-    model = YOLO("yolov8n.pt")  # Можно заменить на yolov8s.pt, yolov8m.pt для большей точности
+    model = YOLO("yolo11x.pt")  # Можно заменить на yolov8s.pt, yolov8m.pt для большей точности
 
     # Запускаем обучение
     results = model.train(
         data="C:\\Users\\alex\\Desktop\\GuideMe\\datasets\\data.yaml",
-        epochs=50,
+        epochs=100,
         imgsz=640,
-        batch=16,
-        name="museum_model",
+        batch=8,
+        name="museum_model11",
         patience=10,
         device=0,  # GPU
     )
 
     # Сохраняем модель
-    model.save("C:\\Users\\alex\\Desktop\\GuideMe\\museum_yolov8.pt")
+    model.save("C:\\Users\\alex\\Desktop\\GuideMe\\museum_yolov11.pt")
     
 if __name__ == '__main__':
     main()

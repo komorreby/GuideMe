@@ -610,17 +610,16 @@ def setup(dp):
                 logger.debug(f"Фото сохранено как {file_path}")
 
                 recognized_objects = recognizer.recognize_image(file_path)
-                matches = recognizer.match_with_exhibits(recognized_objects)
+                match = recognizer.match_with_exhibits(recognized_objects)  # Теперь возвращает один кортеж или None
 
-                if matches:
-                    response = "🔍 Найдены связанные экспонаты:\n\n"
-                    for obj, exhibit in matches:
-                        response += (
-                            f"*{exhibit['title']}*\n"
-                            f"Объект: {obj['class']} (Уверенность: {obj['confidence']:.2%})\n"
-                            f"Автор: {exhibit['artist']}\n"
-                            f"Описание: {exhibit['description']}\n\n"
-                        )
+                if match:
+                    obj, exhibit = match  # Распаковываем один кортеж
+                    response = "🔍 Найден связанный экспонат:\n\n" + (
+                        f"*{exhibit['title']}*\n"
+                        f"Объект: {obj['class']} (Уверенность: {obj['confidence']:.2%})\n"
+                        f"Автор: {exhibit['artist']}\n"
+                        f"Описание: {exhibit['description']}\n"
+                    )
                 else:
                     response = "😕 На изображении не найдено связей с экспонатами музея.\n" + str(recognized_objects)
 

@@ -2,12 +2,13 @@ import cv2
 import numpy as np
 import torch
 from ultralytics import YOLO
-from typing import List, Dict, Tuple
+from typing import List, Tuple, Dict, Optional
+from database import museum_database
 import os
 from loguru import logger
 
 class ImageRecognizer:
-    def __init__(self, model_path: str = 'museum_yolov8.pt'):
+    def __init__(self, model_path: str = 'museum_yolov11.pt'):
         """
         Инициализация распознавателя изображений с YOLO.
 
@@ -39,7 +40,7 @@ class ImageRecognizer:
             raise FileNotFoundError(f"Файл {image_path} не найден")
 
         try:
-            results = self.model(image_path, conf=0.8)
+            results = self.model(image_path, conf=0.1)
             logger.info(f"Распознавание выполнено для {image_path}")
         except Exception as e:
             logger.error(f"Ошибка при распознавании изображения {image_path}: {e}")
@@ -62,24 +63,57 @@ class ImageRecognizer:
         self.cache[image_path] = recognized_objects
         logger.debug(f"Результаты для {image_path} добавлены в кэш")
         return recognized_objects
+    
 
-    def match_with_exhibits(self, recognized_objects: List[Dict]) -> List[Tuple]:
+    def match_with_exhibits(self, recognized_objects: List[Dict], exact_match: bool = False) -> Optional[Tuple[Dict, Dict]]:
         """
-        Сопоставление распознанных объектов с экспонатами музея.
+        Сопоставление распознанного объекта с экспонатом музея, возвращает только первый результат с наибольшей уверенностью.
 
-        :param recognized_objects: Список распознанных объектов
-        :return: Список кортежей (объект, экспонат) для совпадений
+        :param recognized_objects: Список словарей с информацией о распознанных объектах.
+                                Каждый словарь должен содержать ключи 'class' (str) и 'confidence' (float).
+        :param exact_match: Если True, ищет только точные совпадения по названию (title).
+                            Если False, использует поиск по всем полям (title, artist, description, tags).
+        :return: Кортеж (распознанный объект, соответствующий экспонат) с наибольшей уверенностью или None, если совпадений нет.
         """
-        from database import museum_database
+        if not recognized_objects:
+            logger.debug("Список распознанных объектов пуст")
+            return None
 
-        matches = []
-        for obj in recognized_objects:
-            exhibits = museum_database.search_exhibits(obj['class'])
-            if exhibits:
-                for exhibit in exhibits:
-                    matches.append((obj, exhibit))
-                    logger.info(f"Найдено совпадение: {obj['class']} -> {exhibit[2]}")
+        # Сортируем по убыванию уверенности и берём первый элемент
+        best_object = sorted(
+            recognized_objects,
+            key=lambda x: float(x.get('confidence', 0.0)),
+            reverse=True
+        )[0]
+        class_name = best_object.get('class', '').strip()
+
+        if not class_name:
+            logger.warning(f"Объект с наибольшей уверенностью не содержит класса: {best_object}")
+            return None
+
+        logger.debug(f"Поиск экспоната для класса: '{class_name}' (confidence={best_object.get('confidence', 'N/A')}, exact_match={exact_match})")
+
+        try:
+            if exact_match:
+                # Точный поиск только по полю 'title'
+                exhibits = [ex for ex in museum_database.search_exhibits(class_name) 
+                        if ex.get('title', '').lower() == class_name.lower()]
             else:
-                logger.debug(f"Для объекта {obj['class']} экспонаты не найдены")
+                # Поиск по всем полям (title, artist, description, tags)
+                exhibits = museum_database.search_exhibits(class_name)
 
-        return matches
+            logger.debug(f"Найдено {len(exhibits)} экспонатов для класса '{class_name}'")
+
+            if exhibits:
+                # Берём первый найденный экспонат
+                exhibit = exhibits[0]
+                logger.info(f"Совпадение: '{class_name}' -> '{exhibit['title']}' "
+                        f"(уверенность: {best_object.get('confidence', 'N/A')})")
+                return (best_object, exhibit)
+            
+            logger.debug(f"Для объекта '{class_name}' экспонаты не найдены")
+            return None
+
+        except Exception as e:
+            logger.error(f"Ошибка при поиске экспонатов для '{class_name}': {type(e).__name__}: {str(e)}")
+            return None

@@ -45,41 +45,91 @@ class MuseumAIAssistant:
         """
         try:
             context = self.context_manager.get_relevant_context(query)
-            # Оптимизированный промпт с использованием f-строки и минимальной длины
             prompt = (
-                f"Ты - виртуальный экскурсовод музея искусств, тебя зовут Гылыков Гэсэр, эксперт с глубокими знаниями истории искусства, стилей и художников. "
-                f"Отвечай только на вопросы, связанные с искусством, музеем, его коллекциями, художниками или историческим контекстом экспонатов. "
-                f"Если вопрос выходит за рамки темы, вежливо перенаправь пользователя к искусству. "
-                f"Ограничь ответ 500 символами, но делай его максимально содержательным, избегая лишних слов. "
-                f"Адаптируй стиль ответа под уровень вопроса: от простого и увлекательного для новичков до детального и академичного для знатоков. "
-                f"Переведи ответ на язык вопроса, сохраняя культурную тонкость перевода. "
-                f"Добавь любопытный факт или связь с экспонатом, если это уместно. "
-                f"Контекст: {context or 'Нет доступного контекста — используй общие знания об искусстве'}\n\n"
+                f"Ты - виртуальный экскурсовод музея искусств, GuideMe, эксперт в истории искусства. "
+                f"Отвечай только на вопросы об искусстве, музее, экспонатах, художниках или истории. "
+                f"Если вопрос не в теме, перенаправь к искусству. Ограничь ответ 1000 символами. "
+                f"Адаптируй стиль под уровень вопроса: простой для новичков, академичный для знатоков. "
+                f"Переведи ответ на язык вопроса. Добавь факт, если уместно. "
+                f"Контекст: {context}\n\n"
                 f"Вопрос: {query}"
             )
             response = self.giga_client.chat(prompt).choices[0].message.content
-            # Обрезаем ответ до 500 символов, если он превышает
             return response[:500]
         except Exception as e:
             logger.error(f"Ошибка генерации ответа: {e}")
             return "Извините, попробуйте перефразировать вопрос."
 
 class ContextManager:
+    def __init__(self):
+        """Инициализация менеджера контекста с загрузкой всех данных из базы."""
+        self.full_context = self._load_full_context()
+
+    def _load_full_context(self) -> str:
+        """Загрузка всей информации из базы данных в строковый контекст."""
+        try:
+            context_parts = []
+
+            # 1. Данные из museum_knowledge
+            knowledge = museum_database.get_faq()  # Предполагается, что get_faq возвращает список кортежей (вопрос, ответ)
+            if knowledge:
+                knowledge_str = "FAQ музея:\n" + "\n".join(f"Q: {q}\nA: {a}" for q, a in knowledge)
+                context_parts.append(knowledge_str)
+
+            # 2. Данные из exhibits
+            exhibits = museum_database.get_all_exhibits()  # Предполагаем новый метод для получения всех экспонатов
+            if exhibits:
+                exhibits_str = "Экспонаты:\n" + "\n".join(
+                    f"{ex['title']} ({ex['artist']}, {ex['creation_year']}): {ex['description']} "
+                    f"[Зал {ex['hall_id']}, стиль: {ex['art_style']}, теги: {ex['tags']}]"
+                    for ex in exhibits
+                )
+                context_parts.append(exhibits_str)
+
+            # 3. Данные из halls
+            halls = museum_database.get_all_halls()  # Предполагаем новый метод для получения всех залов
+            if halls:
+                halls_str = "Залы:\n" + "\n".join(
+                    f"ID {h['id']}: {h['name']} ({h['location']}, {h['art_period']}): {h['description']} "
+                    f"[размер: {h['size']} м², экспонатов: {h['exhibit_count']}]"
+                    for h in halls
+                )
+                context_parts.append(halls_str)
+
+            # Объединяем все части контекста
+            full_context = "\n\n".join(context_parts)
+            logger.info(f"Контекст загружен: {len(full_context)} символов")
+            return full_context if full_context else "База данных пуста."
+
+        except Exception as e:
+            logger.error(f"Ошибка загрузки контекста: {e}")
+            return "Контекст недоступен из-за ошибки в базе данных."
+
     def get_relevant_context(self, query: str) -> str:
-        """Получение релевантного контекста из базы данных."""
-        # Поиск в FAQ (оптимизация: регистронезависимый поиск сразу в базе)
-        faqs = museum_database.get_faq()
-        for question, answer in faqs:
-            if query.lower() in question.lower():
-                return answer
+        """
+        Возвращает релевантный контекст на основе запроса.
+        Если запрос конкретный, фильтрует контекст, иначе возвращает всё.
+        """
+        query_lower = query.lower()
+        
+        # Проверяем, есть ли точное совпадение в FAQ
+        for question, answer in museum_database.get_faq():
+            if query_lower in question.lower():
+                return f"Ответ из FAQ: {answer}"
 
-        # Поиск в экспонатах
-        exhibits = museum_database.search_exhibits(query)
-        if exhibits:
-            return " ".join(f"{ex[2]}: {ex[3]}" for ex in exhibits)
-        return "Нет специфического контекста"
+        # Если запрос связан с конкретным экспонатом, залом или маршрутом, фильтруем
+        filtered_context = []
+        for line in self.full_context.split("\n"):
+            if query_lower in line.lower():
+                filtered_context.append(line)
+        
+        if filtered_context:
+            return "\n".join(filtered_context)
+        
+        # Если нет точных совпадений, возвращаем весь контекст
+        return self.full_context
 
-# Глобальный экземпляр ассистента (ленивая инициализация не требуется)
+# Глобальный экземпляр ассистента
 museum_ai_assistant = MuseumAIAssistant()
 
 def get_ai_response(user_input: str) -> str:
